@@ -21,12 +21,12 @@ class Camera:
             self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         else:
             pipeline = (
-                "v4l2src device=/dev/video0 io-mode=4 do-timestamp=true ! "
+                "v4l2src device=/dev/video0 ! "
                 "image/jpeg, width={CAM_WIDTH}, height={CAM_HEIGHT}, framerate={CAM_FPS}/1 ! "
                 "jpegparse ! jpegdec ! "
                 "videoconvert ! video/x-raw,format=BGR,width={CAM_WIDTH}, height={CAM_HEIGHT} ! "
                 "queue max-size-buffers=1 leaky=downstream ! "
-                "appsink drop=true max-buffers=1 sync=false enable-last-sample=false emit-signals=false"
+                "appsink drop=true max-buffers=1 sync=false emit-signals=false"
             )
             self.cap = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
             self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)

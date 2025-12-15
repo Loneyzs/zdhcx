@@ -2,7 +2,7 @@ import platform
 import numpy as np
 
 # !!! force close pipeline !!!
-FORCE_NO_PIPELINE = False
+FORCE_NO_PIPELINE = True
 
 # ---------- 运行平台判断 ---------- #
 is_windows = platform.system().lower().startswith("win")

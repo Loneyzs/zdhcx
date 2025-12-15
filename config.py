@@ -30,3 +30,10 @@ GIMBAL_DEFAULT_SYNC = True    # 默认多机同步标志
 
 # ---------- 回零模式参数 ---------- #
 ORIGIN_MODE_SINGLE_TURN = 0    # 单圈回零模式
+
+# ---------- 选题6 几何参数配置 ---------- #
+# 单位: cm
+SCREEN_DISTANCE = 100.0       # 激光笔距离屏幕的水平距离
+GIMBAL_HEIGHT = 15.0          # 云台激光笔中心的离地高度
+PENCIL_HEIGHT_OFFSET = 15.0   # 铅笔画的正方形底边离地面的高度 (根据你的描述调整)
+SQUARE_SIZE = 50.0            # 正方形边长

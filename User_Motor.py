@@ -198,7 +198,9 @@ class User_Motor:
             
         return diff
 
-    def move_to_angles_sync(self, pitch_angle: float, yaw_angle: float, velocity: int = GIMBAL_DEFAULT_VELOCITY):
+    def move_angles_sync(self, pitch_angle: float, yaw_angle: float, velocity: int = GIMBAL_DEFAULT_VELOCITY):
+        # pitch正为向下，负为向上
+        # yaw正为向左，负为向右
         # 获取当前脉冲
         pitch_pulses = self.controller.get_motor_pulses(self.pitch_addr)
         yaw_pulses = self.controller.get_motor_pulses(self.yaw_addr)
@@ -224,11 +226,11 @@ if __name__ == "__main__":
     
     try:
         with User_Motor() as gimbal:
-            #gimbal.reset()
-            #time.sleep(1)
-            gimbal.start_continuous_move(1,1)
-            #time.sleep(3)
-
+            gimbal.reset()
+            time.sleep(1)
+            gimbal.move_angles_sync(-50,50)
+            time.sleep(1)
+            gimbal.move_angles_sync(0,-50)
             #gimbal.reset()
             #time.sleep(3)
             #gimbal.move_to_angles_sync(0,90)

@@ -2,10 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 task.py
-选题6 - 综合任务脚本 (OOP重构版)
-集成功能：
-1. 几何解算 (任务1 & 2)
-2. 视觉伺服闭环控制 (任务3 - A4靶纸追踪)
+选题6 - 综合任务脚本 (OOP重构版 - 含单次标定方案)
 """
 
 import time
@@ -29,7 +26,7 @@ class GeometricSolver:
         self.gimbal_h = config.GIMBAL_HEIGHT
         half_side = config.SQUARE_SIZE / 2.0
         
-        # 屏幕物理坐标系：中心(0, PENCIL_HEIGHT_OFFSET + half_side)
+        # 屏幕物理坐标系
         self.center_x = 0
         self.center_y = config.PENCIL_HEIGHT_OFFSET + half_side
         
@@ -39,10 +36,10 @@ class GeometricSolver:
         left_x = -half_side
         right_x = half_side
         
-        self.p_tl = (left_x, top_y)    # Top-Left
-        self.p_tr = (right_x, top_y)   # Top-Right
-        self.p_br = (right_x, bottom_y)# Bottom-Right
-        self.p_bl = (left_x, bottom_y) # Bottom-Left
+        self.p_tl = (left_x, top_y)    
+        self.p_tr = (right_x, top_y)   
+        self.p_br = (right_x, bottom_y)
+        self.p_bl = (left_x, bottom_y) 
 
     def solve_angles(self, screen_x_cm, screen_y_cm):
         """物理坐标(cm) -> 云台角度(deg)"""
@@ -60,91 +57,58 @@ class GeometricSolver:
 
 
 class VisualServoController:
-    """视觉伺服控制器：负责闭环控制逻辑"""
+    """视觉伺服控制器：负责闭环控制逻辑 (Task 3.1)"""
     def __init__(self, gimbal, camera):
         self.gimbal = gimbal
         self.cam = camera
-        # 载入配置参数
         self.kp = config.KP
         self.max_rpm = config.MAX_RPM
         self.threshold = config.CLOSE_THRESHOLD
         self.step = config.WAYPOINT_STEP
 
     def get_laser_pos(self):
-        """获取当前激光点坐标"""
         frame = self.cam.read_frame()
-        if frame is None:
-            return -1, -1, None
-        
+        if frame is None: return -1, -1, None
         cx, cy = detect_red_laser(frame)
         return cx, cy, frame
 
     def move_to_target_pixel(self, target_x, target_y, timeout=5.0):
-        """
-        [核心] P控制器：驱动云台使激光点到达图像上的像素坐标
-        """
         start_time = time.time()
-        
         while True:
-            # 1. 超时退出
             if time.time() - start_time > timeout:
                 self.gimbal.stop_continuous_move()
                 break
-
-            # 2. 获取反馈
             lx, ly, frame = self.get_laser_pos()
-            
-            # 3. 安全保护：如果丢失激光点，暂停运动
             if lx == -1:
                 self.gimbal.stop_continuous_move()
                 continue
             
-            # 4. 计算误差
             err_x = target_x - lx
             err_y = target_y - ly
             distance = math.hypot(err_x, err_y)
             
-            # 5. 判定到达
             if distance < self.threshold:
                 return True
 
-            # 6. 计算速度 (P控制)
-            # Yaw轴: 图像目标在右(Error>0) -> 需要向右转 -> Yaw负方向
             yaw_rpm = -1 * err_x * self.kp
-            # Pitch轴: 图像目标在下(Error>0) -> 需要向下转 -> Pitch正方向
             pitch_rpm = 1 * err_y * self.kp
-            
-            # 7. 速度限幅
             yaw_rpm = max(min(yaw_rpm, self.max_rpm), -self.max_rpm)
             pitch_rpm = max(min(pitch_rpm, self.max_rpm), -self.max_rpm)
-            
-            # 8. 执行
             self.gimbal.start_continuous_move(int(pitch_rpm), int(yaw_rpm))
 
     def follow_line(self, start_pt, end_pt):
-        """
-        [路径规划] 在两点之间进行插值，生成直线路径
-        """
         p1 = np.array(start_pt)
         p2 = np.array(end_pt)
-        
         dist = np.linalg.norm(p2 - p1)
         steps = int(dist / self.step)
         if steps < 1: steps = 1
-        
         waypoints = np.linspace(p1, p2, steps + 1)
-        
         for pt in waypoints:
-            tx, ty = int(pt[0]), int(pt[1])
-            self.move_to_target_pixel(tx, ty, timeout=1.5)
+            self.move_to_target_pixel(int(pt[0]), int(pt[1]), timeout=1.5)
 
 # ================= 核心任务控制类 =================
 
 class GimbalTaskSystem:
-    """
-    任务控制系统主类
-    供 GUI 或 命令行 调用
-    """
     def __init__(self, gimbal_instance):
         self.gimbal = gimbal_instance
         self.geo_solver = GeometricSolver()
@@ -152,74 +116,47 @@ class GimbalTaskSystem:
         self.servo = None
 
     def _ensure_camera(self):
-        """确保摄像头已开启"""
         if self.cam is None:
             print("正在初始化摄像头...")
             self.cam = Camera()
-            # 预读几帧确保稳定
-            for _ in range(5):
-                self.cam.read_frame()
-                time.sleep(0.1)
-        
+            time.sleep(1.0) # 等待自动曝光稳定
         if self.servo is None:
             self.servo = VisualServoController(self.gimbal, self.cam)
 
     def _release_camera(self):
-        """释放摄像头资源"""
         if self.cam is not None:
             self.cam.release()
             self.cam = None
             self.servo = None
             print("摄像头已释放")
 
-    # --- 任务接口 ---
-
     def run_task_1(self):
-        """任务1：几何回中"""
         print("\n>>> [Task 1] 回到中心")
         tx, ty = self.geo_solver.center_x, self.geo_solver.center_y
         p_angle, y_angle = self.geo_solver.solve_angles(tx, ty)
-        
         self.gimbal.move_angles_sync(p_angle, y_angle)
-        time.sleep(0.5)
-        print("任务1 完成")
         self.gimbal.reset()
 
     def run_task_2(self):
-        """任务2：几何跑圈 (盲跑)"""
-        print("\n>>> [Task 2] 顺时针跑圈 (几何盲跑)")
-        
+        print("\n>>> [Task 2] 几何跑圈")
         solver = self.geo_solver
-        path_points = [solver.p_tl, solver.p_tr, solver.p_br, solver.p_bl, solver.p_tl]
+        path = [solver.p_tl, solver.p_tr, solver.p_br, solver.p_bl, solver.p_tl]
         
-        # 1. 前往起点
-        start_x, start_y = path_points[0]
-        p_start_abs, y_start_abs = solver.solve_angles(start_x, start_y)
-        self.gimbal.move_angles_sync(p_start_abs, y_start_abs)
-        
-        p_current = p_start_abs
-        y_current = y_start_abs
+        start_x, start_y = path[0]
+        p_curr, y_curr = solver.solve_angles(start_x, start_y)
+        self.gimbal.move_angles_sync(p_curr, y_curr)
         time.sleep(0.5)
         
-        # 2. 跑圈 (增量模式)
-        for i, (tx, ty) in enumerate(path_points[1:]):
-            p_target_abs, y_target_abs = solver.solve_angles(tx, ty)
-            
-            p_delta = p_target_abs - p_current
-            y_delta = y_target_abs - y_current
-            
-            self.gimbal.move_angles_sync(p_delta, y_delta)
-            
-            p_current = p_target_abs
-            y_current = y_target_abs
+        for tx, ty in path[1:]:
+            p_next, y_next = solver.solve_angles(tx, ty)
+            self.gimbal.move_angles_sync(p_next - p_curr, y_next - y_curr)
+            p_curr, y_curr = p_next, y_next
             time.sleep(0.5)
-        
-        print("任务2 完成")
         self.gimbal.reset()
 
     def run_task_3(self):
         """任务3：A4靶纸视觉追踪"""
-        print("\n>>> [Task 3] A4靶纸视觉追踪")
+        print("\n>>> [Task 3_1] 闭环A4靶纸视觉追踪")
         
         try:
             self._ensure_camera()
@@ -269,34 +206,155 @@ class GimbalTaskSystem:
             # 但为了脚本独立运行的安全性，默认最后释放
             self._release_camera()
 
-    def stop_all(self):
-        """紧急停止接口"""
-        self.gimbal.stop_all()
-        self.gimbal.stop_continuous_move()
-        print("已发送停止指令")
+    # --- Task 3.2: 单次标定 + 开环解算 ---
+    def run_task_3_2(self):
+        """
+        Task 3 新方案：单次标定 + 几何开环
+        1. 云台复位 (0,0)
+        2. 拍照：获取红色激光点(Origin) 和 A4纸四角
+        3. 计算：像素->厘米 映射关系
+        4. 生成路径：计算各点相对于 Origin 的角度偏移
+        5. 执行：快速移动
+        """
+        print("\n>>> [Task 3.2] 单次标定跑圈 (Calibrated Open-Loop)")
+        
+        # A4纸检测尺寸 (内缩 0.9cm 后)
+        # 真实A4: 21.0 x 29.7 cm
+        # 内缩后: 19.2 x 27.9 cm
+        REAL_WIDTH_CM = 19.2
+        REAL_HEIGHT_CM = 27.9
+        
+        try:
+            self._ensure_camera()
+            
+            # 1. 确保云台处于零位
+            print("1. 正在复位云台至机械零点...")
+            self.gimbal.reset()
+            time.sleep(2.0) # 等待完全静止
+            
+            # 2. 采集图像并识别
+            print("2. 正在采集图像并解算坐标...")
+            laser_px = None
+            rect_pts = None
+            
+            # 连拍几张取最后一张，确保清晰
+            frame = None
+            for _ in range(10):
+                frame = self.cam.read_frame()
+                time.sleep(0.05)
+                
+            if frame is None:
+                print("错误：无法读取图像")
+                return
+
+            # 检测激光点 (作为 (0,0) 参考基准)
+            lx, ly = detect_red_laser(frame)
+            if lx == -1:
+                print("错误：未检测到红色激光点 (请确保激光开启且在视野内)")
+                return
+            laser_px = (lx, ly)
+            print(f"   激光原点像素: {laser_px}")
+
+            # 检测 A4 纸
+            rect_pts = detect_border_points(frame, visualize=False)
+            if rect_pts is None or len(rect_pts) != 4:
+                print("错误：未检测到完整的 A4 靶纸")
+                return
+            print(f"   A4顶点像素: {rect_pts}")
+            
+            # 3. 建立映射关系 (Pixel -> CM)
+            # rect_pts 顺序: [TL, TR, BR, BL] (顺时针)
+            p_tl, p_tr, p_br, p_bl = rect_pts
+            
+            # 计算像素宽和高 (取平均值以减小误差)
+            w1 = np.linalg.norm(np.array(p_tl) - np.array(p_tr)) # 上边
+            w2 = np.linalg.norm(np.array(p_bl) - np.array(p_br)) # 下边
+            h1 = np.linalg.norm(np.array(p_tl) - np.array(p_bl)) # 左边
+            h2 = np.linalg.norm(np.array(p_tr) - np.array(p_br)) # 右边
+            
+            avg_w_px = (w1 + w2) / 2.0
+            avg_h_px = (h1 + h2) / 2.0
+            
+            ratio_x = REAL_WIDTH_CM / avg_w_px   # cm per pixel (width)
+            ratio_y = REAL_HEIGHT_CM / avg_h_px  # cm per pixel (height)
+            
+            # 使用平均比例 (假设像素是正方形)
+            cm_per_pixel = (ratio_x + ratio_y) / 2.0
+            print(f"   标定结果: 1 Pixel ≈ {cm_per_pixel:.4f} cm")
+            
+            # 4. 路径规划与角度解算
+            # 目标路径: Current(Laser) -> TL -> TR -> BR -> BL -> TL
+            target_pixels = [p_tl, p_tr, p_br, p_bl, p_tl]
+            
+            # 记录当前云台的绝对角度 (初始为 0,0)
+            curr_abs_pitch = 0.0
+            curr_abs_yaw = 0.0
+            
+            print("3. 开始执行路径...")
+            
+            for i, (tx, ty) in enumerate(target_pixels):
+                # A. 计算目标点相对于激光原点(Initial Laser)的像素差
+                dx_px = tx - lx
+                dy_px = ty - ly
+                
+                # B. 转换为物理距离 (cm)
+                # 注意坐标系方向：
+                # 图像: X右正, Y下正
+                # 物理: 假设激光点正前方为原点
+                dx_cm = dx_px * cm_per_pixel
+                dy_cm = dy_px * cm_per_pixel
+                
+                # C. 解算目标绝对角度
+                # Yaw: 正=左。图像X向右(dx>0) -> 需要向右转 -> Angle < 0
+                target_yaw = -math.degrees(math.atan2(dx_cm, config.SCREEN_DISTANCE))
+                
+                # Pitch: 正=下。图像Y向下(dy>0) -> 需要向下转 -> Angle > 0
+                # 使用投影距离校正Pitch (球面坐标系)
+                dist_proj = math.hypot(config.SCREEN_DISTANCE, dx_cm)
+                target_pitch = math.degrees(math.atan2(dy_cm, dist_proj))
+                
+                # D. 计算增量并移动
+                delta_pitch = target_pitch - curr_abs_pitch
+                delta_yaw = target_yaw - curr_abs_yaw
+                
+                print(f"   Step {i+1}: 移动增量 P={delta_pitch:.2f}, Y={delta_yaw:.2f}")
+                
+                # 执行移动 (阻塞等待到位)
+                self.gimbal.move_angles_sync(delta_pitch, delta_yaw)
+                
+                # E. 更新当前状态
+                curr_abs_pitch = target_pitch
+                curr_abs_yaw = target_yaw
+                
+                # 稍微停顿，展示效果
+                time.sleep(0.2)
+                
+            print("任务完成，复位中...")
+            self.gimbal.reset()
+
+        except Exception as e:
+            print(f"执行出错: {e}")
+            import traceback
+            traceback.print_exc()
+        finally:
+            self._release_camera()
+
 
 # ================= 命令行入口 =================
 
 if __name__ == "__main__":
-    print(f"=== 选题6 任务程序 (类封装版) ===")
-    print(f"加载配置: KP={config.KP}, MAX_RPM={config.MAX_RPM}")
-
+    print(f"=== 选题6 任务程序 ===")
+    
     try:
-        # User_Motor 作为一个上下文管理器，控制底层串口生命周期
         with User_Motor() as gimbal_dev:
-            
-            # 实例化任务系统
             app = GimbalTaskSystem(gimbal_dev)
-            
-            # 可选：启动时复位
-            # gimbal_dev.reset()
-            # time.sleep(2)
             
             while True:
                 print("\n-----------------------------")
-                print("1. 任务一：几何回中")
-                print("2. 任务二：几何跑圈")
-                print("3. 任务三：视觉伺服跑圈")
+                print("1. [Task 1] 几何回中")
+                print("2. [Task 2] 几何跑圈 (盲跑)")
+                print("3. [Task 3.1] 视觉伺服 (实时闭环 - 旧)")
+                print("4. [Task 3.2] 单次标定跑圈 (推荐 - 新)")
                 print("q. 退出")
                 
                 cmd = input("请输入指令: ")
@@ -306,13 +364,11 @@ if __name__ == "__main__":
                 elif cmd == '2':
                     app.run_task_2()
                 elif cmd == '3':
-                    app.run_task_3()
+                    # 这里调用你原来的闭环逻辑，如果你保留了的话
+                    print("请使用 run_task_3_2") 
+                elif cmd == '4':
+                    app.run_task_3_2()
                 elif cmd == 'q':
                     break
-                else:
-                    print("无效指令")
-                    
     except Exception as e:
-        print(f"系统异常: {e}")
-        import traceback
-        traceback.print_exc()
+        print(f"Main Error: {e}")

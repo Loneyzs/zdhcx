@@ -144,10 +144,10 @@ def detect_border_points(frame, gray_thresh=55, epsilon_slider=10, dist_thresh_s
 
 # 主程序：用于测试和可视化
 if __name__ == "__main__":
-    from cap_module import ZoomedCamera
+    from cam import Camera
 
     # 初始化摄像头
-    cam = ZoomedCamera(zoom_slider=10)
+    cam = Camera()
 
     # 创建窗口
     cv2.namedWindow("1. Binary Threshold", cv2.WINDOW_AUTOSIZE)
@@ -177,7 +177,7 @@ if __name__ == "__main__":
 
     while True:
         # 读取帧
-        frame = cam.read_zoomed_frame()
+        frame = cam.read_frame()
         if frame is None:
             print("无法读取摄像头画面")
             break
